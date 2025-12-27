@@ -1,0 +1,163 @@
+@author: sophiaodell
+"""
+
+import math 
+from datetime import datetime
+import matplotlib.pyplot as plt
+import numpy as np
+from collections import defaultdict
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+
+with open('../../MSC203Shared/CartheDrifters/GLAD_15min_filtered.dat', 'r') as fileObj:
+    Carthe = fileObj.readlines()[5:]
+
+def ExtractData(lines):
+    drifter_id, date_str, time_str, lat, lon = [], [], [], [], []
+    pos_error, e_w_vel, n_s_vel, vel_error = [], [], [], []
+
+    for line in lines:
+        parts = line.strip().split()
+
+    # skip short rows
+        if len(parts) < 9:
+            continue
+
+        try:
+            drifter_id.append(parts[0])
+            date_str.append(parts[1])
+            time_str.append(parts[2])
+            lat.append(float(parts[3]))
+            lon.append(float(parts[4]))
+            pos_error.append(float(parts[5]))
+            e_w_vel.append(float(parts[6]))
+            n_s_vel.append(float(parts[7]))
+            vel_error.append(float(parts[8]))
+        except ValueError:
+            # skip rows with non-numeric values
+            continue
+
+
+
+    return drifter_id, date_str, time_str, lat, lon, pos_error, e_w_vel, n_s_vel, vel_error
+
+def DetectChanges(drifter_ids):
+    count = 0
+    changes = []
+
+    for i in range(1, len(drifter_ids)):
+        if drifter_ids[i] != drifter_ids[i-1]:
+            count += 1
+            changes.append((i, drifter_ids[i]))
+
+    print("Number of drifter tag changes:", count)
+    return count, changes
+
+    
+
+
+def IdentifyTrajectories(drifter_ids):
+    starts, ends = [], []
+    nDrifters = 0
+
+    # First drifter starts at index 0
+    starts.append(0)
+
+    for i in range(1, len(drifter_ids)):
+        if drifter_ids[i] != drifter_ids[i-1]:
+            ends.append(i-1)          # end of previous drifter
+            starts.append(i)          # start of new drifter
+            nDrifters += 1
+
+    ends.append(len(drifter_ids)-1)   # last drifter ends at final row
+    nDrifters += 1
+
+    return nDrifters, starts, ends
+
+
+
+def ComputeSpeeds(e_w_vel, n_s_vel):
+    speeds = []
+    for u, v in zip(e_w_vel, n_s_vel):
+        try:
+            speeds.append(math.sqrt(float(u)**2 + float(v)**2))
+        except ValueError:
+            continue
+    return speeds
+
+def PlotCombined(lat, lon, starts, ends, speeds):
+    fig = plt.figure(figsize=(16, 7))
+
+    # --- Left panel: world map with trajectories ---
+    proj = ccrs.PlateCarree()
+    ax1 = fig.add_subplot(1, 2, 1, projection=proj)
+    ax1.set_title("Drifter Trajectories on Map")
+
+    # Add map features
+    ax1.add_feature(cfeature.LAND)
+    ax1.add_feature(cfeature.OCEAN)
+    ax1.add_feature(cfeature.BORDERS)
+    ax1.coastlines('50m', color='black', linewidth=1)
+    gl = ax1.gridlines(draw_labels=True, linewidth=1,
+                       color='gray', alpha=0.5, linestyle=':')
+
+    # Plot trajectories
+    for s, e in zip(starts, ends):
+        x = lon[s:e+1]
+        y = lat[s:e+1]
+        if len(x) == 0 or len(y) == 0:
+            continue
+        ax1.plot(x, y, '-', linewidth=1, transform=ccrs.PlateCarree())
+        ax1.plot(x[0], y[0], '*', markersize=8, color='green', transform=ccrs.PlateCarree())
+        ax1.plot(x[-1], y[-1], 'o', markersize=8, color='red', transform=ccrs.PlateCarree())
+    
+    
+
+    # --- Right panel: speed histogram ---
+    ax2 = fig.add_subplot(1, 2, 2)
+    speeds = np.array(speeds)
+    ax2.hist(speeds, bins=50, color='skyblue', edgecolor='black')
+    ax2.set_xlabel("Speed (m/s)")
+    ax2.set_ylabel("Frequency")
+    ax2.set_title("Histogram of Drifter Speeds")
+
+    plt.tight_layout()
+    plt.show()
+
+
+def main():
+    drifter_id, date_str, time_str, lat, lon, pos_error, e_w_vel, n_s_vel, vel_error = ExtractData(Carthe)
+
+    # Detect changes
+    count, changes = DetectChanges(drifter_id)
+    print("Changes:", changes)
+
+    # Identify trajectories
+    nDrifters, starts, ends = IdentifyTrajectories(drifter_id)
+    print("Number of drifters:", nDrifters)
+ 
+    # Speed analysis
+    speeds = ComputeSpeeds(e_w_vel, n_s_vel)
+    PlotCombined(lat, lon, starts, ends, speeds)
+    
+    speeds = np.array(speeds)
+    max_speed = np.max(speeds)
+    mean_speed = np.mean(speeds)
+    median_speed = np.median(speeds)
+    mode_speed = float(np.bincount(np.round(speeds,2).astype(int)).argmax())
+    print(f"Max speed: {max_speed:.3f}")
+    print(f"Mean speed: {mean_speed:.3f}")
+    print(f"Median speed: {median_speed:.3f}")
+    print(f"Mode speed: {mode_speed:.3f}")
+   
+main()
+
+#Column 1:  drifter ID string (like CARTHE_XXX, XXX=3 digit integer)
+#Column 2:  date (yyyy-mm-dd)
+#Column 3:  time (HH:MM:SS.SS)
+#Column 4:  latitude (decimal degrees)
+#Column 5:  longitude (decimal degrees)
+#Column 6:  estimated position error (meters) 
+#Column 7:  u (east-west) velocity (m/sec)
+#Column 8:  v (north-south) velocity (m/sec)
+#Column 9:  estimated velocity error (m/sec)
